@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  tg-ws-proxy:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+    container_name: tg-ws-proxy
+    ports:
+      - "0.0.0.0:1080:1080"
+    restart: unless-stopped
