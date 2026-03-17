@@ -77,6 +77,8 @@ _ws_blacklist: Set[Tuple[int, bool]] = set()
 _dc_fail_until: Dict[Tuple[int, bool], float] = {}
 _DC_FAIL_COOLDOWN = 60.0  # seconds
 
+_socks_credentials: Optional[Tuple[str, str]] = None
+
 
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
@@ -779,9 +781,70 @@ async def _handle_client(reader, writer):
             writer.close()
             return
         nmethods = hdr[1]
-        await reader.readexactly(nmethods)
-        writer.write(b'\x05\x00')  # no-auth
-        await writer.drain()
+        methods = await reader.readexactly(nmethods)
+        if not methods:
+            writer.write(b'\x05\xff')
+            try:
+                await writer.drain()
+            except Exception:
+                pass
+            writer.close()
+            return
+        creds = _socks_credentials
+        if creds:
+            if 0x02 not in methods:
+                writer.write(b'\x05\xff')
+                try:
+                    await writer.drain()
+                except Exception:
+                    pass
+                writer.close()
+                return
+            writer.write(b'\x05\x02')
+            await writer.drain()
+            try:
+                auth_hdr = await asyncio.wait_for(
+                    reader.readexactly(2), timeout=10)
+                if auth_hdr[0] != 1:
+                    raise ValueError(f"unsupported auth version {auth_hdr[0]}")
+                uname_len = auth_hdr[1]
+                username = await reader.readexactly(uname_len)
+                pname_len = (await reader.readexactly(1))[0]
+                password = await reader.readexactly(pname_len)
+                username = username.decode('utf-8', errors='ignore')
+                password = password.decode('utf-8', errors='ignore')
+            except (asyncio.IncompleteReadError, asyncio.TimeoutError, ValueError) as exc:
+                log.debug("[%s] SOCKS5 auth read failed: %s", label, exc)
+                writer.write(b'\x01\x01')
+                try:
+                    await writer.drain()
+                except Exception:
+                    pass
+                writer.close()
+                return
+            expected_user, expected_pass = creds
+            if username != expected_user or password != expected_pass:
+                log.warning("[%s] SOCKS5 auth rejected for %s", label, username)
+                writer.write(b'\x01\x01')
+                try:
+                    await writer.drain()
+                except Exception:
+                    pass
+                writer.close()
+                return
+            writer.write(b'\x01\x00')
+            await writer.drain()
+        else:
+            if 0x00 not in methods:
+                writer.write(b'\x05\xff')
+                try:
+                    await writer.drain()
+                except Exception:
+                    pass
+                writer.close()
+                return
+            writer.write(b'\x05\x00')
+            await writer.drain()
 
         # -- SOCKS5 CONNECT request --
         req = await asyncio.wait_for(reader.readexactly(4), timeout=10)
@@ -1121,6 +1184,10 @@ def main():
                     default=['2:149.154.167.220', '4:149.154.167.220'],
                     help='Target IP for a DC, e.g. --dc-ip 1:149.154.175.205'
                          ' --dc-ip 2:149.154.167.220')
+    ap.add_argument('--username', type=str,
+                    help='Require this username for SOCKS5 auth')
+    ap.add_argument('--password', type=str,
+                    help='Require this password for SOCKS5 auth')
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='Debug logging')
     args = ap.parse_args()
@@ -1129,6 +1196,13 @@ def main():
         dc_opt = parse_dc_ip_list(args.dc_ip)
     except ValueError as e:
         log.error(str(e))
+        sys.exit(1)
+
+    global _socks_credentials
+    if args.username and args.password:
+        _socks_credentials = (args.username, args.password)
+    elif args.username or args.password:
+        log.error('Both --username and --password must be provided together')
         sys.exit(1)
 
     logging.basicConfig(

@@ -27,3 +27,6 @@ scan_ips.py
 scan.txt
 AyuGramDesktop-dev/
 tweb-master/
+
+# Docker
+*.env

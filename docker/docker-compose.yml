@@ -5,6 +5,9 @@ services:
     build:
       context: ../
       dockerfile: docker/Dockerfile
+      args:
+        USERNAME: ${USERNAME}
+        PASSWORD: ${PASSWORD}
     container_name: tg-ws-proxy
     ports:
       - "0.0.0.0:1080:1080"
