@@ -1,8 +1,5 @@
 FROM python:3-slim
 
-ARG USERNAME
-ARG PASSWORD
-
 WORKDIR /app
 
 COPY . .
