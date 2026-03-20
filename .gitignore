@@ -30,3 +30,5 @@ tweb-master/
 
 # Docker
 *.env
+
+/icon.icns
